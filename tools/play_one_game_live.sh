@@ -3,5 +3,5 @@
 	"python sample_bots/python/HunterBot.py" \
 	"python sample_bots/python/LeftyBot.py" \
 	"python sample_bots/python/HunterBot.py" \
-	"python sample_bots/python/LeftyBot.py" |
+	"java -jar ../target/ants-0.0.1-SNAPSHOT.jar" |
 java -jar visualizer.jar
