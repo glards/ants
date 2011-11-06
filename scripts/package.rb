@@ -7,14 +7,12 @@ scriptRoot = File.dirname(File.expand_path(__FILE__))
 
 scriptRoot << "/" if scriptRoot[-1] != '/'
 
-src = scriptRoot + "../src/main/java/"
+src = "../src/main/java/"
 
-zipFile = scriptRoot + "../build/bot.zip"
+zipFile = File.expand_path("../build/bot.zip",scriptRoot)
 
-basedir = File::expand_path(src)
+basedir = File::expand_path(src,scriptRoot)
 basedir << "/" if basedir[-1] != '/'
-
-puts File::expand_path(zipFile)
 
 File.delete(zipFile) if File.exists?(zipFile)
 

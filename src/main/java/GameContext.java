@@ -1,7 +1,10 @@
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Stack;
 import java.util.Vector;
 
@@ -22,6 +25,9 @@ import java.util.Vector;
  *
  */
 public class GameContext extends AbstractSystemInputParser {
+	// Static
+	public static boolean SetupCalled = false;
+	
 	// Some constants
 	private final int MAX_HILL = 2;
 	private final int MAX_PLAYER = 8;
@@ -35,7 +41,11 @@ public class GameContext extends AbstractSystemInputParser {
 	public int viewRadiusSquared;
 	public int attackRadiusSquared;
 	public int spawnRadiusSquared;
-
+	
+	// Mechanic variables
+	private AgentSpawner _spawner;
+	
+	// Game variables
 	// The current turn
 	private int _turn = 0;
 	
@@ -63,13 +73,21 @@ public class GameContext extends AbstractSystemInputParser {
 	private Vector<Position> _enemyHills = new Vector<Position>(MAX_HILL * MAX_PLAYER);
 	
 	// Our ants
-	private Vector<Position> _ownAnts = new Vector<Position>(10);
+	private Vector<Position> _ownAnts = new Vector<Position>(15);
+	private Vector<Position> _ownDeadAnts = new Vector<Position>(10);
 	private Vector<Position> _enemyAnts = new Vector<Position>(25);
+	
+	private Vector<Agent> _agents = new Vector<Agent>(15);
 	
 	
 	@Override
 	public void setup(int loadTime, int turnTime, int rows, int cols,
 			int turns, int viewRadius2, int attackRadius2, int spawnRadius2) {
+		Position.maxRows = rows;
+		Position.maxCols = cols;
+		
+		GameContext.SetupCalled = true;
+		
 		this.loadTime = loadTime;
 		this.turnTime = turnTime;
 		this.rows = rows;
@@ -93,16 +111,8 @@ public class GameContext extends AbstractSystemInputParser {
 		Arrays.fill(_distances, 0);
 	}
 	
-	/**
-	 * Utility method to get the index of the tile represented by row and col in a bitset or array.
-	 * @param row The row index
-	 * @param col The column index
-	 * @return The index
-	 */
-	private int getIndex(int row, int col) {
-		int idx = (row%rows)*cols + (col%cols);
-		assert(idx < _nbTiles);
-		return idx;
+	public void setSpawner(AgentSpawner spawner) {
+		this._spawner = spawner;
 	}
 	
 	private void setSquare(BitSet s, int row, int col, int radius2) {
@@ -113,18 +123,76 @@ public class GameContext extends AbstractSystemInputParser {
 			for (int y = 0; y <= r; y++) {
 				int y2=y*y;
 				if (x2+y2 < radius2) {
-					s.set(getIndex(row+x, col+y));
-					s.set(getIndex(row-x, col+y));
-					s.set(getIndex(row+x, col-y));
-					s.set(getIndex(row-x, col-y));
+					s.set(Position.getIndex(row+x, col+y));
+					s.set(Position.getIndex(row-x, col+y));
+					s.set(Position.getIndex(row+x, col-y));
+					s.set(Position.getIndex(row-x, col-y));
 				}
 			}
 		}
 	}
+	
+    /**
+     * Calculates distance between two locations on the game map.
+     * 
+     * @param t1 one location on the game map
+     * @param t2 another location on the game map
+     * 
+     * @return distance between <code>t1</code> and <code>t2</code>
+     */
+    public int getDistance(Position t1, Position t2) {
+        int rowDelta = Math.abs(t1.getRow() - t2.getRow());
+        int colDelta = Math.abs(t1.getCol() - t2.getCol());
+        rowDelta = Math.min(rowDelta, rows - rowDelta);
+        colDelta = Math.min(colDelta, cols - colDelta);
+        return rowDelta * rowDelta + colDelta * colDelta;
+    }
+    
+    /**
+     * Returns one or two orthogonal directions from one location to the another.
+     * 
+     * @param t1 one location on the game map
+     * @param t2 another location on the game map
+     * 
+     * @return orthogonal directions from <code>t1</code> to <code>t2</code>
+     */
+    public List<Aim> getDirections(Position t1, Position t2) {
+        List<Aim> directions = new ArrayList<Aim>();
+        if (t1.getRow() < t2.getRow()) {
+            if (t2.getRow() - t1.getRow() >= rows / 2) {
+                directions.add(Aim.NORTH);
+            } else {
+                directions.add(Aim.SOUTH);
+            }
+        } else if (t1.getRow() > t2.getRow()) {
+            if (t1.getRow() - t2.getRow() >= rows / 2) {
+                directions.add(Aim.SOUTH);
+            } else {
+                directions.add(Aim.NORTH);
+            }
+        }
+        if (t1.getCol() < t2.getCol()) {
+            if (t2.getCol() - t1.getCol() >= cols / 2) {
+                directions.add(Aim.WEST);
+            } else {
+                directions.add(Aim.EAST);
+            }
+        } else if (t1.getCol() > t2.getCol()) {
+            if (t1.getCol() - t2.getCol() >= cols / 2) {
+                directions.add(Aim.EAST);
+            } else {
+                directions.add(Aim.WEST);
+            }
+        }
+        return directions;
+    }
 
 	@Override
 	public void beforeUpdate() {
-		// before receiving new state
+		// Clear stateless data
+		_ownAnts.clear();
+		_enemyAnts.clear();
+		_ownDeadAnts.clear();
 		
 		// We clear the visible portion
 		_visible.clear();
@@ -136,7 +204,7 @@ public class GameContext extends AbstractSystemInputParser {
 
 	@Override
 	public void addWater(int row, int col) {
-		_waters.set(getIndex(row,col));
+		_waters.set(Position.getIndex(row,col));
 	}
 
 	@Override
@@ -156,17 +224,18 @@ public class GameContext extends AbstractSystemInputParser {
 
 	@Override
 	public void removeAnt(int row, int col, int owner) {
-		// TODO Auto-generated method stub
-		
+		if (owner == 0) {
+			_ownDeadAnts.add(new Position(row, col));
+		}
 	}
 	
 	@Override
 	public void addHill(int row, int col, int owner) {
 		if (owner > 0) {
-			_enemyHills.add(new Position(row,col));
-			_distances[getIndex(row,col)] = 0;
+			_enemyHills.add(new Position(row, col));
+			_distances[Position.getIndex(row, col)] = 0;
 		} else {
-			_ownHills.add(new Position(row,col));
+			_ownHills.add(new Position(row, col));
 		}
 	}
 	
@@ -194,11 +263,63 @@ public class GameContext extends AbstractSystemInputParser {
 		 }
 	}
 	
+	private void handleNewAgents() {
+		HashMap<Integer, Agent> positionLookup = new HashMap<Integer, Agent>(_agents.size());
+		Vector<Position> newAnts = new Vector<Position>();
+		Vector<Agent> handledAgents = new Vector<Agent>(_ownAnts.size()); // Not used at the moment
+		
+		// Create the lookup to match the ants we received with our agents
+		for (Agent a : _agents) {
+			positionLookup.put(a.getNextPosition().getIndex(), a);
+		}
+		
+		// Update the agents when they are found
+		for (Position p : _ownAnts) {
+			if (positionLookup.containsKey(p.getIndex())) {
+				Agent a = positionLookup.get(p.getIndex());
+				a.clearNextPosition();
+				a.setCurrentPosition(p);
+				handledAgents.add(a);
+			} else {
+				newAnts.add(p);
+			}
+		}
+		
+		// Remove dead agents
+		for (Position p : _ownDeadAnts) {
+			if (positionLookup.containsKey(p.getIndex())) {
+				// Remove the agents from the list as it is dead
+				Agent a = positionLookup.get(p.getIndex());
+				handledAgents.add(a);
+				_agents.remove(a);
+			} else {
+				// Hmmm, we got one of our ant that died in a wrong spot ?!
+				//TODO: Check if we should lookup dead ants with nextPosition or currentPosition (or both)
+				assert(false);
+			}
+		}
+		
+		// Spawn new ants
+		for (Position p : newAnts) {
+			if (_spawner != null) {
+				Agent a = _spawner.spawnNewAgent(p);
+				if (a != null) {
+					a.setCurrentPosition(p);
+					handledAgents.add(a);
+					_agents.add(a);
+				}
+			}
+		}
+		
+		//TODO: Check with handled agents that everything was handled
+	}
+	
 	@Override
 	public void afterUpdate() {
 		/* Handle after update computation like :
 		 *  - Compute the new territory		
 		 *  - Compute the distance from the hills for new territory
+		 *  - Create new agents
 		 */
 		
 		// Compute the new territory
@@ -207,6 +328,8 @@ public class GameContext extends AbstractSystemInputParser {
 		
 		//TODO: Do we have to do special handling for case with two hills
 		//computeTerritory(row, col);
+		
+		handleNewAgents();
 	}
 
 	@Override
@@ -229,6 +352,10 @@ public class GameContext extends AbstractSystemInputParser {
 			debug.println(Debug.drawMapBitSet(_newWorld, rows, cols));
 			debug.println();
 			debug.println();
+		}
+		
+		for (Agent a : _agents) {
+			a.think();
 		}
 	}
 
