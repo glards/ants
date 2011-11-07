@@ -1,3 +1,6 @@
 build/bot.zip
 target/*
 tools/game_logs/*
+.settings
+.project
+.classpath

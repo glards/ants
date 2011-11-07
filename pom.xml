@@ -17,7 +17,7 @@
 							<goal>exec</goal>
 						</goals>
 						<configuration>
-							<executable>${basedir}/scripts/package.rb</executable>
+							<executable>/usr/bin/env ruby ${basedir}/scripts/package.rb</executable>
 						</configuration>
 					</execution>
 				</executions>
